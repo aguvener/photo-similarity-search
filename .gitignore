@@ -6,3 +6,4 @@ chroma-*.log
 *.pyc
 mlx_model
 .env
+photos
