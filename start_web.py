@@ -1,13 +1,9 @@
-import hashlib
-import json
 import logging
 import os
-import requests
 import random
 import signal
 import socket
 import sqlite3
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
@@ -15,43 +11,37 @@ from flask import jsonify, g, send_file
 from flask import Flask, render_template, request, redirect, url_for
 from io import BytesIO
 from logging.handlers import RotatingFileHandler
-import msgpack
-import numpy as np
 import chromadb
 from PIL import Image, ImageOps
 import mlx_clip
 
 
-
 # Generate unique ID for the machine
 host_name = socket.gethostname()
 unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
-unique_id = "a9d9bc7f-1ff4-5b40-b9d2-db08cad7a42e"
 
 # Configure logging
-log_app_name = "web"
-log_level = os.getenv('LOG_LEVEL', 'DEBUG')
-log_level = getattr(logging, log_level.upper())
+def setup_logging(app_name, unique_id):
+    # Configure logging level and file
+    log_level = os.getenv('LOG_LEVEL', 'INFO').upper()  # Default to INFO for less verbosity
+    log_file = f"{app_name}_{unique_id}.log"
 
-file_handler = RotatingFileHandler(f"{log_app_name}_{unique_id}.log", maxBytes=10485760, backupCount=10)
-file_handler.setLevel(log_level)
-file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(file_formatter)
+    # Setup file handler with rotating logs
+    file_handler = RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5)
+    file_handler.setLevel(log_level)
+    file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
 
-console_handler = logging.StreamHandler()
-console_handler.setLevel(log_level)
-console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(console_formatter)
-
-logger = logging.getLogger(log_app_name)
-logger.setLevel(log_level)
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
+    # Setup logger
+    logger = logging.getLogger(app_name)
+    logger.setLevel(log_level)
+    logger.addHandler(file_handler)
+    return logger
 
 # Load environment variables
 load_dotenv()
 
-
+logger = setup_logging("web", unique_id)
 
 logger.info(f"Running on machine ID: {unique_id}")
 
@@ -76,6 +66,8 @@ logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
 logger.debug(f"Configuration - NUM_IMAGE_RESULTS: {NUM_IMAGE_RESULTS}")
 logger.debug(f"Configuration - CLIP_MODEL: {CLIP_MODEL}")
 logger.debug("Configuration loaded.")
+
+
 
 # Append the unique ID to the db file path and cache file path
 SQLITE_DB_FILEPATH = f"{DATA_DIR}{str(unique_id)}_{SQLITE_DB_FILENAME}"
@@ -109,6 +101,17 @@ items = collection.get()["ids"]
 print(len(items))
 # WEBS
 
+def find_file(filename, search_path):
+    for root, dir, files in os.walk(search_path):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
+
+def get_db():
+    db = getattr(g, '_database', None)
+    if db is None:
+        db = g._database = sqlite3.connect(SQLITE_DB_FILEPATH)
+    return db
 
 @app.teardown_appcontext
 def close_connection(exception):
@@ -133,7 +136,7 @@ def serve_specific_image(filename):
     # Construct the filepath and check if it exists
     print(filename)
 
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    filepath = find_file(filename, SOURCE_IMAGE_DIRECTORY)
     print(filepath)
     if not os.path.exists(filepath):
         return "Image not found", 404
@@ -200,7 +203,7 @@ def serve_image(filename):
 
     # Construct the full file path. Be careful with security implications.
     # Ensure that you validate `filename` to prevent directory traversal attacks.
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    filepath = find_file(filename, SOURCE_IMAGE_DIRECTORY)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
         return "Image not found", 404
